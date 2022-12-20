@@ -1,74 +1,55 @@
-﻿#include <iostream>
+﻿#include <Windows.h>
+#include "pageguard.hpp"
 
-#include "PGHooker.hpp"
-
-void PGHAPI CallbackRead0( PCONTEXT pCtx, E_CallbackFlags eType )
+void __fastcall callback_test ( PCONTEXT ctx, e_callback_flags type )
 {
-    printf( "-- CallbackRead0 \n" );
+	printf ( "-- CallbackRead0 \n" );
 }
 
-void PGHAPI CallbackWrite1( PCONTEXT pCtx, E_CallbackFlags eType )
+static decltype ( &MessageBoxA ) oMessageBox { };
+int WINAPI hkMessageBoxA ( HWND hWnd,
+						   LPCSTR lpText,
+						   LPCSTR lpCaption,
+						   UINT uType )
 {
-    printf( "-- CallbackWrite1 \n" );
+	printf ( "MessageBoxA hook called !!! \n" );
+
+	return oMessageBox ( hWnd, lpText, "Hooked", uType );
 }
 
-void PGHAPI CallbackReadWrite2( PCONTEXT pCtx, E_CallbackFlags eType )
+auto main ( ) -> int
 {
-    printf( "-- CallbackReadWrite2: %d \n", eType );
-}
+	pageguard::init ( );
 
-int WINAPI hkMessageBoxA( HWND hWnd,
-    LPCSTR lpText,
-    LPCSTR lpCaption,
-    UINT uType )
-{
-    printf( "MessageBoxA hook called !!! \n" );
+	printf ( "RW hooking test \n--- \n" );
+	{
+		volatile int temp {};
+		volatile int* mas = ( int* ) VirtualAlloc ( NULL, 0x1000, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE );
 
-    PGHooker::DisableHookForOnce( MessageBoxA );
-    return MessageBoxA( hWnd, lpText, lpCaption, uType );
-}
+		pageguard::create_callback ( ( int* ) mas, e_callback_flags::flag_read, callback_test );
 
-int main()
-{
-    PGHooker::Initialize( );
+		printf ( "reading pMas[0] \n" );
+		temp = mas [ 0 ];
 
-    printf( "RW hooking test \n--- \n" );
-    { 
-        volatile int temp {};
-        volatile int* pMas = ( int* ) VirtualAlloc( NULL, 0x1000, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE );
+		pageguard::remove_callback ( ( int* ) mas );
+		pageguard::remove_callback ( ( int* ) mas + 1 );
+	}
 
-        PGHooker::CreateCallback( ( int* ) pMas, CF_READ, CallbackRead0 );
-        PGHooker::CreateCallback( ( int* ) pMas + 1, CF_WRITE, CallbackWrite1 );
-        PGHooker::CreateCallback( ( int* ) pMas + 2, CF_READ | CF_WRITE, CallbackReadWrite2 );
+	printf ( "\nFunction hooking test \n--- \n" );
+	{
+		pageguard::create_hook ( MessageBoxA, hkMessageBoxA, reinterpret_cast < void** > ( &oMessageBox ) );
 
-        printf( "reading pMas[0] \n" );
-        temp = pMas[ 0 ];
+		printf ( "Calling MessageBoxA \n" );
+		MessageBoxA ( NULL, "Text", "Caption", MB_ICONINFORMATION );
 
-        printf( "writing pMas[1] \n" );
-        pMas[ 1 ] = 1;
+		pageguard::remove_hook ( MessageBoxA );
+	}
 
-        printf( "writing & reading pMas[2] \n" );
-        pMas[ 2 ] = temp;
-        temp = pMas[ 2 ];
+	pageguard::destroy ( );
+	printf ( "End! \n" );
 
-        PGHooker::RemoveCallback( ( int* ) pMas );
-        PGHooker::RemoveCallback( ( int* ) pMas + 1 );
-    }
+infinite_loop:
+	goto infinite_loop;
 
-    printf( "\nFunction hooking test \n--- \n" );
-    {
-        PGHooker::CreateHook( MessageBoxA, hkMessageBoxA );
-
-        printf( "Calling MessageBoxA \n" );
-
-        MessageBoxA( NULL, "Text", "Caption", MB_ICONINFORMATION );
-
-        PGHooker::RemoveHook( MessageBoxA );
-    }
-
-    PGHooker::Uninitilize( ); // also this function removes PAGE_GUARD from all used pages 
-
-    printf( "End! \n" );
-
-    return 0;
+	return 0;
 }
